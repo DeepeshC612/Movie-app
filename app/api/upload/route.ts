@@ -1,40 +1,39 @@
-import { NextRequest } from 'next/server';
-import { writeFile } from 'fs/promises';
-import { join } from 'path';
-import { getUserFromRequest } from '@/lib/auth';
-import { successResponse, errorResponse } from '@/lib/response';
-import { STATUS_CODES, MESSAGES } from '@/lib/constants';
+import { NextRequest, NextResponse } from 'next/server';
+import { v2 as cloudinary } from 'cloudinary';
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 export async function POST(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) {
-    return errorResponse(MESSAGES.UNAUTHORIZED, STATUS_CODES.UNAUTHORIZED);
-  }
-
   try {
-    const data = await request.formData();
-    const file: File | null = data.get('file') as unknown as File;
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
 
     if (!file) {
-      return errorResponse('No file uploaded', STATUS_CODES.BAD_REQUEST);
+      return NextResponse.json({ status: false, message: 'No file provided' });
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Create unique filename
-    const filename = `${Date.now()}-${file.name}`;
-    const path = join(process.cwd(), 'public/uploads', filename);
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { resource_type: 'image' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(buffer);
+    });
 
-    // Write file to public/uploads directory
-    await writeFile(path, buffer);
-
-    return successResponse('File uploaded successfully', {
-      filename,
-      url: `/uploads/${filename}`
+    return NextResponse.json({
+      status: true,
+      result: { url: (result as any).secure_url }
     });
   } catch (error) {
-    console.error('Upload error:', error);
-    return errorResponse('Upload failed', STATUS_CODES.INTERNAL_SERVER_ERROR);
+    return NextResponse.json({ status: false, message: 'Upload failed' });
   }
 }
